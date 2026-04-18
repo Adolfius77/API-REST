@@ -5,6 +5,8 @@
 package API;
 
 import DTOS.profileDTO;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.UriInfo;
 import jakarta.ws.rs.Consumes;
@@ -33,6 +35,7 @@ public class PerfilesResource {
     @Context
     private UriInfo context;
     private static final Logger logger = Logger.getLogger(PerfilesResource.class.getName());
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private final ProfileService profileService = new ProfileService();
     /**
      * Creates a new instance of PerfilesResource
@@ -50,37 +53,56 @@ public class PerfilesResource {
             @QueryParam("pais") String pais,
             @QueryParam("genero") String genero) {
         if (edad == null || pais == null || genero == null) {
-            return Response.status(Response.Status.BAD_REQUEST)
-                    .entity(Map.of("error", "Parámetros requeridos: edad, pais, genero."))
-                    .build();
+            return jsonResponse(Response.Status.BAD_REQUEST,
+                    Map.of("error", "Parámetros requeridos: edad, pais, genero."));
         }
         try {
             profileDTO resultado = profileService.obtenerRandomPorCriterios(edad, pais, genero);
             if (resultado == null) {
-                return Response.status(Response.Status.NOT_FOUND)
-                        .entity(Map.of("message", "No se encontraron perfiles con al menos 2 criterios."))
-                        .build();
+                return jsonResponse(Response.Status.NOT_FOUND,
+                        Map.of("message", "No se encontraron perfiles con al menos 2 criterios."));
             }
-            return Response.ok(resultado).build();
+            return jsonResponse(Response.Status.OK, resultado);
         } catch (SQLException e) {
             logger.severe("Error consultando perfiles: " + e.getMessage());
-            return Response.serverError().entity(Map.of("error", "Error de base de datos.")).build();
+            return jsonResponse(Response.Status.INTERNAL_SERVER_ERROR,
+                    Map.of("error", "Error de base de datos."));
         }
     }
 
     @POST
-    @Consumes(MediaType.APPLICATION_JSON)
+    @Consumes(MediaType.WILDCARD)
     @Produces(MediaType.APPLICATION_JSON)
-    public Response postJson(profileDTO content) {
+    public Response postJson(String body) {
         try {
+            profileDTO content = OBJECT_MAPPER.readValue(body, profileDTO.class);
             profileDTO guardado = profileService.agregar(content);
             logger.info("Perfil agregado: " + guardado.getNombre());
-            return Response.status(Response.Status.CREATED).entity(guardado).build();
+            return jsonResponse(Response.Status.CREATED, guardado);
+        } catch (JsonProcessingException e) {
+            return jsonResponse(Response.Status.BAD_REQUEST,
+                    Map.of("error", "JSON inválido en el body."));
         } catch (IllegalArgumentException e) {
-            return Response.status(Response.Status.BAD_REQUEST).entity(Map.of("error", e.getMessage())).build();
+            return jsonResponse(Response.Status.BAD_REQUEST,
+                    Map.of("error", e.getMessage()));
         } catch (SQLException e) {
             logger.severe("Error insertando perfil: " + e.getMessage());
-            return Response.serverError().entity(Map.of("error", "Error de base de datos.")).build();
+            return jsonResponse(Response.Status.INTERNAL_SERVER_ERROR,
+                    Map.of("error", "Error de base de datos."));
+        }
+    }
+
+    private Response jsonResponse(Response.Status status, Object body) {
+        try {
+            return Response.status(status)
+                    .type(MediaType.APPLICATION_JSON)
+                    .entity(OBJECT_MAPPER.writeValueAsString(body))
+                    .build();
+        } catch (JsonProcessingException e) {
+            return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+                    .type(MediaType.APPLICATION_JSON)
+                    .entity("{\"error\":\"Error serializando respuesta.\"}")
+                    .build();
         }
     }
 }
